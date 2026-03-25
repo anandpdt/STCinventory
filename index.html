@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC Inventory System</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { teal: { 50: '#f0fdfa', 100: '#ccfbf1', 200: '#99f6e4', 300: '#5eead4', 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488', 700: '#0f766e', 800: '#115e59', 900: '#134e4a' } }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #FAFAFA; color: #1e293b; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        .slide-in { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .loader { border: 3px solid #f3f3f3; border-radius: 50%; border-top: 3px solid #0d9488; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Hide scrollbar for clean look */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="selection:bg-teal-100 selection:text-teal-900 overflow-x-hidden">
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="fixed inset-0 bg-[#FAFAFA] z-[100] flex flex-col items-center justify-center fade-in">
+        <div class="loader mb-4" style="width: 40px; height: 40px; border-width: 4px;"></div>
+        <p class="text-teal-700 font-medium">Initializing STC Inventory...</p>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-[90] flex flex-col gap-2"></div>
+
+    <!-- Modals -->
+    <div id="modal-overlay" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center p-4 fade-in">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden relative" id="modal-content">
+            <!-- Modal content injected here -->
+        </div>
+    </div>
+
+    <!-- Main Application Container -->
+    <div id="app" class="min-h-screen hidden flex-col">
+        <!-- Topbar -->
+        <header id="topbar" class="bg-white border-b border-gray-200 sticky top-0 z-40 hidden flex-shrink-0">
+            <!-- Topbar injected here -->
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="flex-1 w-full flex flex-col">
+            <!-- Views injected here -->
+        </main>
+
+        <!-- Footer -->
+        <footer id="footer" class="bg-white border-t border-gray-200 mt-auto hidden flex-shrink-0 w-full">
+            <!-- Footer injected here -->
+        </footer>
+    </div>
+
+    <!-- FIREBASE & APP LOGIC -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, addDoc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- FIREBASE SETUP ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyC_wUADXYBdL7dDONMDOWxICsZNPZ8HP50",
+            authDomain: "inventory-1104c.firebaseapp.com",
+            projectId: "inventory-1104c",
+            storageBucket: "inventory-1104c.firebasestorage.app",
+            messagingSenderId: "362257720209",
+            appId: "1:362257720209:web:e15b20233db3758380b030",
+            measurementId: "G-P9FMEDB086"
+        };
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const getPath = (col) => `artifacts/${appId}/public/data/${col}`;
+
+        // --- CONSTANTS & STATE ---
+        const CUPBOARDS = [
+            { id: 'TL', name: 'TL Cupboard', desc: 'Tinkerer\'s Lab equipment', icon: 'cpu' },
+            { id: 'RnA', name: 'RnA Cupboard', desc: 'Robotics & Automation', icon: 'wrench' },
+            { id: 'TP', name: 'TP Cupboard', desc: 'Tech Pro hardware', icon: 'database' },
+            { id: 'Common', name: 'Common Cupboard', desc: 'General purpose items', icon: 'box' },
+        ];
+
+        let state = {
+            user: null,
+            profile: null, // { id, name, email, role, clubs: [] }
+            inventory: [],
+            transactions: [],
+            users: [], // For Master Admin
+            currentView: 'auth', // auth, home, inventory, admin, history
+            adminTab: 'dashboard', // dashboard, inventory, transactions, users
+            filterCupboard: 'All',
+            searchQuery: '',
+            isLoginMode: true // for Auth screen
+        };
+
+        let unsubscribes = [];
+
+        // --- UTILS ---
+        const showToast = (message, type = 'success') => {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `px-4 py-3 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 slide-in ${type === 'error' ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`;
+            toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : 'check-circle-2'}" class="w-4 h-4"></i> <span>${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons({ root: toast });
+            setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
+        };
+
+        const toggleLoading = (show) => {
+            document.getElementById('loading-overlay').style.display = show ? 'flex' : 'none';
+        };
+
+        const openModal = (htmlContent) => {
+            const overlay = document.getElementById('modal-overlay');
+            document.getElementById('modal-content').innerHTML = htmlContent;
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+            lucide.createIcons();
+        };
+
+        const closeModal = () => {
+            const overlay = document.getElementById('modal-overlay');
+            overlay.classList.add('hidden');
+            overlay.classList.remove('flex');
+        };
+
+        window.closeModal = closeModal; // Export to global for HTML onclicks
+
+        // --- ROUTING LOGIC ---
+        function handleHashChange() {
+            const hash = window.location.hash.replace('#', '') || 'auth';
+            
+            // Protect Admin Route
+            if (hash === 'admin' && (!state.profile || !['admin', 'master_admin'].includes(state.profile.role))) {
+                showToast("Access Denied: Admins only", "error");
+                window.location.hash = 'home';
+                return;
+            }
+
+            // Protect Logged-in Routes
+            if (['home', 'inventory', 'admin', 'history'].includes(hash) && !state.profile) {
+                window.location.hash = 'auth';
+                return;
+            }
+
+            // Valid Routes
+            if (['home', 'inventory', 'admin', 'history', 'auth'].includes(hash)) {
+                state.currentView = hash;
+            } else {
+                state.currentView = state.profile ? 'home' : 'auth';
+            }
+            
+            renderApp();
+        }
+
+        // --- FIREBASE INITIALIZATION & LISTENERS ---
+        async function init() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.warn("Initial background auth skipped (likely disabled). Proceed to manual login.");
+                toggleLoading(false);
+            }
+
+            onAuthStateChanged(auth, async (currentUser) => {
+                state.user = currentUser;
+                
+                if (!currentUser || currentUser.isAnonymous) {
+                    state.profile = null;
+                    cleanupListeners();
+                    window.location.hash = 'auth';
+                    handleHashChange();
+                    toggleLoading(false);
+                    return;
+                }
+
+                try {
+                    const docRef = doc(db, getPath('users'), currentUser.uid);
+                    const snap = await getDoc(docRef);
+                    if (snap.exists()) {
+                        state.profile = { id: snap.id, ...snap.data() };
+                        setupListeners();
+                        // Route to home if on auth page or empty, otherwise respect existing hash URL
+                        if (!window.location.hash || window.location.hash === '#auth') {
+                            window.location.hash = 'home';
+                        } else {
+                            handleHashChange();
+                        }
+                    } else {
+                        state.profile = null;
+                        window.location.hash = 'auth';
+                        handleHashChange();
+                    }
+                } catch (e) {
+                    console.error("Profile fetch error", e);
+                } finally {
+                    toggleLoading(false);
+                }
+            });
+        }
+
+        function setupListeners() {
+            cleanupListeners();
+            if (!state.user) return;
+
+            unsubscribes.push(onSnapshot(collection(db, getPath('inventory')), 
+                (snap) => { state.inventory = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderMainContent(); },
+                (err) => console.error("Inventory error", err)
+            ));
+
+            unsubscribes.push(onSnapshot(collection(db, getPath('transactions')), 
+                (snap) => { state.transactions = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderMainContent(); },
+                (err) => console.error("Tx error", err)
+            ));
+
+            if (state.profile.role === 'master_admin') {
+                unsubscribes.push(onSnapshot(collection(db, getPath('users')), 
+                    (snap) => { state.users = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderMainContent(); },
+                    (err) => console.error("Users error", err)
+                ));
+            }
+        }
+
+        function cleanupListeners() {
+            unsubscribes.forEach(unsub => unsub());
+            unsubscribes = [];
+        }
+
+        // --- GLOBAL ACTIONS ---
+        window.switchView = (view, cupboardId = 'All') => {
+            if (view === 'inventory') {
+                state.filterCupboard = cupboardId;
+                state.searchQuery = '';
+            }
+            window.location.hash = view; // Triggers handleHashChange
+        };
+
+        window.switchAdminTab = (tab) => {
+            state.adminTab = tab;
+            renderApp();
+        };
+
+        window.logout = async () => {
+            try {
+                await signOut(auth);
+                state.profile = null;
+                cleanupListeners();
+                window.location.hash = 'auth';
+                showToast("Logged out successfully");
+            } catch (err) {
+                showToast("Error signing out", "error");
+            }
+        };
+
+        // --- RENDER FUNCTIONS ---
+        function renderApp() {
+            const app = document.getElementById('app');
+            app.classList.remove('hidden');
+            app.classList.add('flex');
+
+            if (!state.profile || state.currentView === 'auth') {
+                document.getElementById('topbar').classList.add('hidden');
+                document.getElementById('footer').classList.add('hidden');
+                renderAuth();
+            } else {
+                document.getElementById('topbar').classList.remove('hidden');
+                document.getElementById('footer').classList.remove('hidden');
+                renderTopbar();
+                renderMainContent();
+                renderFooter();
+            }
+            lucide.createIcons();
+        }
+
+        function renderTopbar() {
+            const topbar = document.getElementById('topbar');
+            let adminSwitchHtml = '';
+            
+            if (['admin', 'master_admin'].includes(state.profile.role)) {
+                adminSwitchHtml = `
+                    <div class="flex bg-gray-100 p-1 rounded-lg mr-4">
+                        <button onclick="switchView('home')" class="px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${state.currentView !== 'admin' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}">Student</button>
+                        <button onclick="switchView('admin')" class="px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${state.currentView === 'admin' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}">Admin Panel</button>
+                    </div>
+                `;
+            }
+
+            topbar.innerHTML = `
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                    <div class="flex items-center gap-2 cursor-pointer group" onclick="switchView('home')">
+                        <div class="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center shadow-sm">
+                            <i data-lucide="box" class="w-5 h-5 text-white"></i>
+                        </div>
+                        <h1 class="text-xl font-semibold text-gray-800 tracking-tight hidden sm:block">STC Inventory</h1>
+                    </div>
+                    <div class="flex items-center">
+                        ${adminSwitchHtml}
+                        <button onclick="switchView('history')" class="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-teal-600 transition-colors mr-4 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-teal-200">
+                            <i data-lucide="history" class="w-4 h-4"></i> <span class="hidden sm:block">My History</span>
+                        </button>
+                        <div class="flex items-center gap-3 pl-4 border-l border-gray-200">
+                            <div class="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                <div class="w-8 h-8 rounded-full bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
+                                    ${state.profile.name ? state.profile.name.charAt(0).toUpperCase() : 'U'}
+                                </div>
+                                <span class="hidden sm:block">${state.profile.name}</span>
+                            </div>
+                            <button onclick="logout()" class="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50" title="Logout">
+                                <i data-lucide="log-out" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderFooter() {
+            const footer = document.getElementById('footer');
+            
+            if (state.profile.role === 'user') {
+                footer.innerHTML = `
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <p class="text-sm text-gray-500 text-center sm:text-left">
+                            Need admin access or specific equipment? Reach out to the core team.
+                        </p>
+                        <a href="https://wa.me/917050342098" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 px-5 py-2.5 bg-[#25D366] hover:bg-[#128C7E] text-white text-sm font-medium rounded-full transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#25D366]">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.305-.885-.653-1.482-1.459-1.656-1.758-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.422-.272.347-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                            WhatsApp Support
+                        </a>
+                    </div>
+                `;
+            } else {
+                footer.innerHTML = `
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <p class="text-sm text-gray-500 text-center sm:text-left flex items-center justify-center sm:justify-start gap-2">
+                            <i data-lucide="shield-check" class="w-4 h-4 text-teal-600"></i> 
+                            STC Inventory System - ${state.profile.role === 'master_admin' ? 'Master Admin' : 'Club Admin'} Portal
+                        </p>
+                        <a href="https://wa.me/917050342098" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-full transition-colors shadow-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300">
+                            <svg class="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.305-.885-.653-1.482-1.459-1.656-1.758-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.422-.272.347-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                            Get Support
+                        </a>
+                    </div>
+                `;
+            }
+        }
+
+        function renderMainContent() {
+            const main = document.getElementById('main-content');
+            if (!state.profile) return; // Guard
+
+            if (state.currentView === 'home') {
+                main.innerHTML = getStudentHomeHTML();
+            } else if (state.currentView === 'inventory') {
+                main.innerHTML = getInventoryTableHTML();
+                attachInventoryListeners();
+            } else if (state.currentView === 'history') {
+                main.innerHTML = getUserHistoryHTML();
+            } else if (state.currentView === 'admin' && ['admin', 'master_admin'].includes(state.profile.role)) {
+                main.innerHTML = getAdminDashboardHTML();
+                attachAdminListeners();
+            }
+            lucide.createIcons();
+        }
+
+        // --- AUTH LOGIC ---
+        window.toggleAuthMode = () => {
+            state.isLoginMode = !state.isLoginMode;
+            renderAuth();
+        };
+
+        window.submitAuth = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('auth-submit-btn');
+            
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            
+            if (!state.isLoginMode && !email.toLowerCase().endsWith('@iitp.ac.in')) {
+                showToast("Please use your official @iitp.ac.in email address", "error");
+                return;
+            }
+
+            btn.innerHTML = `<div class="loader w-5 h-5 border-2 border-white border-t-transparent"></div>`;
+            btn.disabled = true;
+
+            try {
+                if (state.isLoginMode) {
+                    // --- REAL FIREBASE LOGIN ---
+                    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                    state.user = userCredential.user;
+                    
+                    const docRef = doc(db, getPath('users'), state.user.uid);
+                    const snap = await getDoc(docRef);
+                    if (snap.exists()) {
+                        state.profile = { id: snap.id, ...snap.data() };
+                        showToast(`Welcome back, ${state.profile.name}!`);
+                        window.location.hash = 'home';
+                        setupListeners();
+                    } else {
+                        showToast("Profile data not found. Please contact admin.", "error");
+                        await signOut(auth);
+                    }
+                } else {
+                    // --- REAL FIREBASE SIGNUP ---
+                    const name = document.getElementById('auth-name').value;
+                    const rollNo = document.getElementById('auth-rollno').value;
+                    const batch = document.getElementById('auth-batch').value;
+                    const branch = document.getElementById('auth-branch').value;
+                    
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    state.user = userCredential.user;
+                    
+                    // SAVE USER PROFILE - Default to Normal User
+                    const newUserProfile = { 
+                        email, name, rollNo, batch, branch, 
+                        role: 'user', 
+                        clubs: [] 
+                    };
+                    await setDoc(doc(db, getPath('users'), state.user.uid), newUserProfile);
+                    
+                    state.profile = { id: state.user.uid, ...newUserProfile };
+                    showToast("Account created successfully!");
+                    window.location.hash = 'home';
+                    setupListeners();
+                }
+            } catch (err) {
+                console.error("Auth Error:", err);
+                let errMsg = err.message;
+                // Clean up common Firebase error messages
+                if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+                    errMsg = "Invalid email or password";
+                } else if (err.code === 'auth/email-already-in-use') {
+                    errMsg = "Email is already associated with an account";
+                } else if (err.code === 'auth/weak-password') {
+                    errMsg = "Password is too weak (min 6 chars)";
+                }
+                showToast(errMsg, "error");
+                btn.innerHTML = state.isLoginMode ? 'Login to Dashboard' : 'Create Account';
+                btn.disabled = false;
+            }
+        };
+
+        function renderAuth() {
+            const main = document.getElementById('main-content');
+            main.innerHTML = `
+                <div class="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gray-50 p-4 w-full h-full fade-in">
+                    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
+                        <div class="bg-teal-600 p-8 text-center">
+                            <div class="w-12 h-12 bg-white rounded-xl flex items-center justify-center mx-auto mb-4 shadow-sm">
+                                <i data-lucide="box" class="w-6 h-6 text-teal-600"></i>
+                            </div>
+                            <h2 class="text-2xl font-bold text-white">STC Inventory</h2>
+                            <p class="text-teal-100 mt-1 text-sm">Sign in to manage equipment</p>
+                        </div>
+                        
+                        <form onsubmit="submitAuth(event)" class="p-8 space-y-4">
+                            ${!state.isLoginMode ? `
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                                <input id="auth-name" required type="text" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="Student Name" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Roll Number</label>
+                                <input id="auth-rollno" required type="text" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="e.g., 2201CSXX" />
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Batch</label>
+                                    <input id="auth-batch" required type="text" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="e.g., 2022" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+                                    <input id="auth-branch" required type="text" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="e.g., CSE" />
+                                </div>
+                            </div>
+                            ` : ''}
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                                <input id="auth-email" required type="email" pattern=".*@iitp\.ac\.in$" title="Please use your official @iitp.ac.in email" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="student@iitp.ac.in" />
+                                ${!state.isLoginMode ? '<p class="text-xs text-gray-500 mt-1">Must be an @iitp.ac.in email address</p>' : ''}
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                <input id="auth-password" required type="password" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" placeholder="••••••••" />
+                            </div>
+
+                            <button id="auth-submit-btn" type="submit" class="w-full py-2.5 px-4 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors flex justify-center items-center mt-6 h-10">
+                                ${state.isLoginMode ? 'Login to Dashboard' : 'Create Account'}
+                            </button>
+                        </form>
+
+                        <div class="px-8 pb-8 text-center border-t border-gray-50 pt-6">
+                            <p class="text-sm text-gray-600">
+                                ${state.isLoginMode ? "Don't have an account? " : "Already have an account? "}
+                                <button onclick="toggleAuthMode()" type="button" class="text-teal-600 font-semibold hover:underline">
+                                    ${state.isLoginMode ? 'Sign up' : 'Login'}
+                                </button>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        // --- STUDENT HTML ---
+        function getStudentHomeHTML() {
+            const getCount = (id) => state.inventory.filter(i => i.cupboard === id).reduce((acc, curr) => acc + (Number(curr.total_quantity) || 0), 0);
+            
+            let cardsHtml = CUPBOARDS.map(c => `
+                <div onclick="switchView('inventory', '${c.id}')" class="group bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col items-center text-center">
+                    <div class="w-16 h-16 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center mb-5 group-hover:scale-110 transition-transform duration-300">
+                        <i data-lucide="${c.icon}" class="w-8 h-8"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-900 mb-1">${c.name}</h3>
+                    <p class="text-gray-500 text-sm mb-4">${c.desc}</p>
+                    <div class="w-full flex items-center justify-between mt-auto pt-5 border-t border-gray-50">
+                        <span class="text-sm font-medium text-gray-500 bg-gray-50 px-3 py-1 rounded-full">${getCount(c.id)} total units</span>
+                        <button class="text-sm font-medium text-teal-600 flex items-center gap-1 group-hover:underline underline-offset-4">
+                            View Shelves <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <div class="max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 fade-in">
+                    <div class="mb-10 text-center">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-3">Welcome to STC Inventory</h2>
+                        <p class="text-gray-500 max-w-2xl mx-auto">Select a cupboard below to browse shelves and available equipment.</p>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${cardsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- USER HISTORY HTML ---
+        function getUserHistoryHTML() {
+            const userTx = [...state.transactions]
+                .filter(tx => tx.user_id === state.profile.id)
+                .sort((a,b) => b.timestamp - a.timestamp);
+
+            const txRows = userTx.map(tx => `
+                <tr class="hover:bg-gray-50/50">
+                    <td class="px-6 py-4 text-sm text-gray-500">${new Date(tx.timestamp).toLocaleString()}</td>
+                    <td class="px-6 py-4 text-sm font-medium text-gray-900">${tx.quantity}x ${tx.item_name}</td>
+                    <td class="px-6 py-4">
+                        ${tx.status === 'issued' 
+                            ? `<span class="text-xs font-medium px-2 py-1 bg-amber-50 text-amber-700 rounded-md border border-amber-100">Issued</span>` 
+                            : `<span class="text-xs font-medium px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100">Returned</span>`
+                        }
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                        ${tx.status === 'issued' ? `<button onclick='returnItem(${JSON.stringify(tx)})' class="text-xs font-medium text-teal-600 bg-teal-50 px-3 py-1.5 rounded-md hover:bg-teal-100 transition-colors">Return Item</button>` : ''}
+                    </td>
+                </tr>
+            `).join('') || `<tr><td colSpan="4" class="text-center py-8 text-gray-500">You have no transaction history.</td></tr>`;
+
+            return `
+                <div class="max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 fade-in flex-1">
+                    <div class="flex items-center gap-4 mb-8">
+                        <button onclick="switchView('home')" class="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1 transition-colors">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Back
+                        </button>
+                        <h2 class="text-2xl font-bold text-gray-900 tracking-tight">My Transaction History</h2>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-gray-50/50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Date & Time</th>
+                                    <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Item Borrowed</th>
+                                    <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                                    <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">${txRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        function getInventoryTableHTML() {
+            const cupboardOptions = CUPBOARDS.map(c => `<option value="${c.id}" ${state.filterCupboard === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+            
+            // Header / Search area remains the same
+            const headerHtml = `
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+                    <div>
+                        <button onclick="switchView('home')" class="text-sm text-gray-500 hover:text-gray-800 mb-2 flex items-center gap-1 transition-colors">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Back to Home
+                        </button>
+                        <h2 class="text-2xl font-bold text-gray-900 tracking-tight">
+                            ${state.filterCupboard === 'All' ? 'All Inventory Items' : `${state.filterCupboard} Cupboard`}
+                        </h2>
+                    </div>
+                    <div class="flex flex-col sm:flex-row items-center gap-3">
+                        <div class="relative w-full sm:w-64">
+                            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+                            <input type="text" id="searchInput" placeholder="Search items..." value="${state.searchQuery}" class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none shadow-sm" />
+                        </div>
+                        <div class="relative w-full sm:w-auto">
+                            <i data-lucide="filter" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+                            <select id="filterSelect" class="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500/20 outline-none bg-white cursor-pointer appearance-none shadow-sm">
+                                <option value="All" ${state.filterCupboard === 'All' ? 'selected' : ''}>All Cupboards</option>
+                                ${cupboardOptions}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            let contentHtml = '';
+
+            if (state.filterCupboard === 'All') {
+                // Generic Table for "All Cupboards"
+                const filteredData = state.inventory.filter(item => {
+                    return item.item_name?.toLowerCase().includes(state.searchQuery.toLowerCase());
+                });
+
+                let rowsHtml = filteredData.length > 0 ? filteredData.map(item => {
+                    const isOut = item.available_quantity <= 0;
+                    const statusHtml = isOut 
+                        ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-100"><i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Out of Stock</span>`
+                        : `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Available</span>`;
+                    
+                    return `
+                        <tr class="hover:bg-gray-50/50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item.item_name}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="text-xs font-medium text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">${item.cupboard}</span>
+                                <span class="text-xs text-gray-400 ml-1">(${item.shelf || 'Shelf 1'})</span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900 font-medium">${item.available_quantity} <span class="text-gray-400 font-normal">/ ${item.total_quantity}</span></td>
+                            <td class="px-6 py-4 whitespace-nowrap">${statusHtml}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right">
+                                <button onclick='openIssueModal(${JSON.stringify(item)})' ${isOut ? 'disabled' : ''} class="px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${isOut ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-teal-600 text-teal-600 hover:bg-teal-50 shadow-sm'}">
+                                    Issue Item
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('') : `<tr><td colSpan="5" class="px-6 py-12 text-center text-gray-500">No items found matching criteria.</td></tr>`;
+
+                contentHtml = `
+                    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-50/50 border-b border-gray-200">
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Item Name</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Location</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-center">Qty (Avail / Total)</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">${rowsHtml}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // Shelf-based View for Specific Cupboards
+                const shelves = [1, 2, 3, 4];
+                let shelvesHtml = shelves.map(shelfNum => {
+                    const shelfName = `Shelf ${shelfNum}`;
+                    const shelfItems = state.inventory.filter(item => {
+                        const matchesCupboard = item.cupboard === state.filterCupboard;
+                        // Default older items to Shelf 1 if they don't have a shelf property
+                        const matchesShelf = item.shelf === shelfName || (!item.shelf && shelfNum === 1);
+                        const matchesSearch = item.item_name?.toLowerCase().includes(state.searchQuery.toLowerCase());
+                        return matchesCupboard && matchesShelf && matchesSearch;
+                    });
+
+                    let itemsHtml = shelfItems.length > 0 ? shelfItems.map(item => {
+                        const isOut = item.available_quantity <= 0;
+                        const statusHtml = isOut 
+                            ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-100"><i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Out of Stock</span>`
+                            : `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Available</span>`;
+                        
+                        return `
+                            <tr class="hover:bg-gray-50/50 transition-colors border-b border-gray-50 last:border-0">
+                                <td class="px-6 py-4 text-sm font-medium text-gray-900">${item.item_name}</td>
+                                <td class="px-6 py-4 text-center text-sm text-gray-900 font-medium">${item.available_quantity} <span class="text-gray-400 font-normal">/ ${item.total_quantity}</span></td>
+                                <td class="px-6 py-4">${statusHtml}</td>
+                                <td class="px-6 py-4 text-right">
+                                    <button onclick='openIssueModal(${JSON.stringify(item)})' ${isOut ? 'disabled' : ''} class="px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${isOut ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-teal-600 text-teal-600 hover:bg-teal-50 shadow-sm'}">
+                                        Issue Item
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('') : `<tr><td colSpan="4" class="px-6 py-8 text-center text-gray-400 text-sm border-none italic">No items found on this shelf.</td></tr>`;
+
+                    return `
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+                            <div class="bg-teal-50/50 border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                                <div class="flex items-center gap-2 text-gray-800 font-semibold">
+                                    <i data-lucide="align-justify" class="w-5 h-5 text-teal-600"></i>
+                                    <span>${shelfName}</span>
+                                </div>
+                                <span class="text-xs font-medium bg-white px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 shadow-sm">${shelfItems.length} items</span>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-white border-b border-gray-100">
+                                            <th class="px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Item Name</th>
+                                            <th class="px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-center">Qty (Avail / Total)</th>
+                                            <th class="px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Status</th>
+                                            <th class="px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-50 bg-white">
+                                        ${itemsHtml}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                contentHtml = `<div>${shelvesHtml}</div>`;
+            }
+
+            return `
+                <div class="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 fade-in flex-1">
+                    ${headerHtml}
+                    ${contentHtml}
+                </div>
+            `;
+        }
+
+        function attachInventoryListeners() {
+            const searchInput = document.getElementById('searchInput');
+            const filterSelect = document.getElementById('filterSelect');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => { state.searchQuery = e.target.value; renderMainContent(); });
+            }
+            if (filterSelect) {
+                filterSelect.addEventListener('change', (e) => { state.filterCupboard = e.target.value; renderMainContent(); });
+            }
+        }
+
+        window.openIssueModal = (item) => {
+            const html = `
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-900">Issue Item</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <p class="text-sm text-gray-500 mb-1">Item</p>
+                        <p class="font-medium text-gray-900">${item.item_name}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Quantity to Issue</label>
+                        <input id="issueQty" type="number" min="1" max="${item.available_quantity}" value="1" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500" />
+                        <p class="text-xs text-gray-500 mt-1">Max available: ${item.available_quantity}</p>
+                    </div>
+                    <button onclick='confirmIssue(${JSON.stringify(item)})' id="confirmIssueBtn" class="w-full mt-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex justify-center items-center h-10">
+                        Confirm Issue
+                    </button>
+                </div>
+            `;
+            openModal(html);
+        };
+
+        window.confirmIssue = async (item) => {
+            const qtyInput = document.getElementById('issueQty');
+            const qty = Number(qtyInput.value);
+            const btn = document.getElementById('confirmIssueBtn');
+
+            if (qty < 1 || qty > item.available_quantity) return;
+            
+            btn.innerHTML = `<div class="loader w-5 h-5 border-2 border-white border-t-transparent"></div>`;
+            btn.disabled = true;
+
+            try {
+                await addDoc(collection(db, getPath('transactions')), {
+                    item_id: item.id,
+                    item_name: item.item_name,
+                    user_id: state.profile.id,
+                    user_name: state.profile.name,
+                    cupboard: item.cupboard, // Track cupboard for easier admin filtering
+                    quantity: qty,
+                    status: 'issued',
+                    timestamp: Date.now()
+                });
+                await updateDoc(doc(db, getPath('inventory'), item.id), {
+                    available_quantity: Number(item.available_quantity) - qty
+                });
+                showToast(`Successfully issued ${qty}x ${item.item_name}`);
+                closeModal();
+            } catch (e) {
+                showToast("Failed to issue item", "error");
+                btn.innerHTML = "Confirm Issue";
+                btn.disabled = false;
+            }
+        };
+
+        // --- ADMIN HTML ---
+        function getAdminDashboardHTML() {
+            const isMaster = state.profile.role === 'master_admin';
+            
+            // Support legacy single string club or new array of clubs
+            let adminClubs = [];
+            if (state.profile.clubs && Array.isArray(state.profile.clubs)) {
+                adminClubs = state.profile.clubs;
+            } else if (state.profile.club) {
+                adminClubs = [state.profile.club];
+            }
+
+            // Master Admin sees all, Club Admin sees only their assigned clubs
+            const adminInv = isMaster ? state.inventory : state.inventory.filter(i => adminClubs.includes(i.cupboard));
+            const adminTx = isMaster ? state.transactions : state.transactions.filter(tx => {
+                const item = state.inventory.find(i => i.id === tx.item_id);
+                return item && adminClubs.includes(item.cupboard);
+            });
+
+            let totalItems = 0, availableItems = 0;
+            adminInv.forEach(item => {
+                totalItems += Number(item.total_quantity) || 0;
+                availableItems += Number(item.available_quantity) || 0;
+            });
+            const issuedItems = totalItems - availableItems;
+
+            const tabs = [
+                { id: 'dashboard', label: 'Dashboard Overview', icon: 'layout-dashboard' },
+                { id: 'inventory', label: 'Manage Inventory', icon: 'list' },
+                { id: 'transactions', label: 'Transaction History', icon: 'history' }
+            ];
+            
+            if (isMaster) {
+                tabs.push({ id: 'users', label: 'Manage Users', icon: 'users' });
+            }
+
+            const sidebarHtml = tabs.map(nav => `
+                <button onclick="switchAdminTab('${nav.id}')" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${state.adminTab === nav.id ? 'bg-teal-50 text-teal-600 border border-teal-100' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
+                    <i data-lucide="${nav.icon}" class="w-4 h-4"></i> ${nav.label}
+                </button>
+            `).join('');
+
+            let contentHtml = '';
+            if (state.adminTab === 'dashboard') {
+                const pendingHtml = adminTx.filter(t => t.status === 'issued').slice(0, 5).map(tx => `
+                    <div class="flex items-center justify-between pb-4 border-b border-gray-50 last:border-0 last:pb-0">
+                        <div>
+                            <p class="text-sm font-medium text-gray-900">${tx.user_name} <span class="text-gray-500 font-normal">borrowed</span> ${tx.quantity}x ${tx.item_name}</p>
+                            <p class="text-xs text-gray-400 mt-0.5">${new Date(tx.timestamp).toLocaleString()}</p>
+                        </div>
+                        <span class="text-xs font-medium px-2 py-1 bg-amber-50 text-amber-700 rounded-md border border-amber-100">Issued</span>
+                    </div>
+                `).join('') || `<p class="text-sm text-gray-500 text-center py-4">No pending returns.</p>`;
+
+                contentHtml = `
+                    <div class="space-y-8 fade-in">
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-900">Dashboard Overview ${!isMaster ? `(${adminClubs.join(', ')})` : '(Master)'}</h2>
+                            <p class="text-gray-500 mt-1">Real-time statistics from Firestore.</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div><p class="text-sm font-medium text-gray-500 mb-1">Total Items</p><h3 class="text-3xl font-bold text-gray-900">${totalItems}</h3></div>
+                                <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><i data-lucide="package" class="w-6 h-6"></i></div>
+                            </div>
+                            <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div><p class="text-sm font-medium text-gray-500 mb-1">Issued Items</p><h3 class="text-3xl font-bold text-gray-900">${issuedItems}</h3></div>
+                                <div class="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center"><i data-lucide="shopping-cart" class="w-6 h-6"></i></div>
+                            </div>
+                            <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div><p class="text-sm font-medium text-gray-500 mb-1">Available Items</p><h3 class="text-3xl font-bold text-gray-900">${availableItems}</h3></div>
+                                <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><i data-lucide="check-circle-2" class="w-6 h-6"></i></div>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-4">Pending Returns</h3>
+                            <div class="space-y-4">${pendingHtml}</div>
+                        </div>
+                    </div>
+                `;
+            } else if (state.adminTab === 'inventory') {
+                const invRows = adminInv.map(item => `
+                    <tr class="hover:bg-gray-50/50">
+                        <td class="px-6 py-4 text-sm font-medium text-gray-900">${item.item_name}</td>
+                        <td class="px-6 py-4 text-sm text-gray-600">
+                            ${item.cupboard}
+                            <span class="block text-xs text-gray-400 mt-0.5">${item.shelf || 'Shelf 1'}</span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-900">${item.available_quantity} / ${item.total_quantity}</td>
+                        <td class="px-6 py-4 text-right flex items-center justify-end gap-2">
+                            <button onclick='openItemModal(${JSON.stringify(item)})' class="p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded-md transition-colors"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
+                            <button onclick='deleteItem("${item.id}")' class="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </td>
+                    </tr>
+                `).join('') || `<tr><td colSpan="4" class="text-center py-8 text-gray-500">No items in inventory.</td></tr>`;
+
+                contentHtml = `
+                    <div class="fade-in space-y-6">
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-2xl font-bold text-gray-900">Manage Inventory ${!isMaster ? `(${adminClubs.join(', ')})` : ''}</h2>
+                            <button onclick="openItemModal(null)" class="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                <i data-lucide="plus" class="w-4 h-4"></i> Add Item
+                            </button>
+                        </div>
+                        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-gray-50/50 border-b border-gray-200">
+                                    <tr>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Item Name</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Location</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Qty (A/T)</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">${invRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else if (state.adminTab === 'transactions') {
+                const txRows = [...adminTx].sort((a,b) => b.timestamp - a.timestamp).map(tx => `
+                    <tr class="hover:bg-gray-50/50">
+                        <td class="px-6 py-4 text-sm text-gray-500">${new Date(tx.timestamp).toLocaleString()}</td>
+                        <td class="px-6 py-4 text-sm font-medium text-gray-900">${tx.user_name}</td>
+                        <td class="px-6 py-4 text-sm text-gray-900">${tx.quantity}x ${tx.item_name}</td>
+                        <td class="px-6 py-4">
+                            ${tx.status === 'issued' 
+                                ? `<span class="text-xs font-medium px-2 py-1 bg-amber-50 text-amber-700 rounded-md border border-amber-100">Issued</span>` 
+                                : `<span class="text-xs font-medium px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100">Returned</span>`
+                            }
+                        </td>
+                        <td class="px-6 py-4 text-right">
+                            ${tx.status === 'issued' ? `<button onclick='returnItem(${JSON.stringify(tx)})' class="text-xs font-medium text-teal-600 bg-teal-50 px-3 py-1.5 rounded-md hover:bg-teal-100 transition-colors">Mark Returned</button>` : ''}
+                        </td>
+                    </tr>
+                `).join('') || `<tr><td colSpan="5" class="text-center py-8 text-gray-500">No transactions recorded.</td></tr>`;
+
+                contentHtml = `
+                    <div class="fade-in space-y-6">
+                        <h2 class="text-2xl font-bold text-gray-900">Transaction History</h2>
+                        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-gray-50/50 border-b border-gray-200">
+                                    <tr>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">User</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Item</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">${txRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else if (state.adminTab === 'users' && isMaster) {
+                const userRows = state.users.map(u => {
+                    const uClubs = u.clubs || (u.club ? [u.club] : []);
+                    return `
+                    <tr class="hover:bg-gray-50/50">
+                        <td class="px-6 py-4 text-sm font-medium text-gray-900">${u.name}<br><span class="text-xs text-gray-500 font-normal">${u.email}</span></td>
+                        <td class="px-6 py-4 text-sm text-gray-600">${u.rollNo || 'N/A'}</td>
+                        <td class="px-6 py-4 text-sm text-gray-600">
+                            <span class="px-2 py-1 rounded-md text-xs font-medium ${u.role === 'master_admin' ? 'bg-purple-50 text-purple-700' : (u.role === 'admin' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-700')}">${u.role.replace('_', ' ').toUpperCase()}</span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-600">${u.role === 'admin' ? (uClubs.length > 0 ? uClubs.join(', ') : '-') : '-'}</td>
+                        <td class="px-6 py-4 text-right">
+                            <button onclick='openUserModal(${JSON.stringify(u)})' class="p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded-md transition-colors"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
+                        </td>
+                    </tr>
+                `}).join('') || `<tr><td colSpan="5" class="text-center py-8 text-gray-500">No users found.</td></tr>`;
+
+                contentHtml = `
+                    <div class="fade-in space-y-6">
+                        <h2 class="text-2xl font-bold text-gray-900">Manage Users</h2>
+                        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-gray-50/50 border-b border-gray-200">
+                                    <tr>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">User</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Roll No</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Role</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Assigned Clubs</th>
+                                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">${userRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="flex flex-1 overflow-hidden bg-[#FAFAFA] fade-in h-full min-h-[calc(100vh-4rem)]">
+                    <aside class="w-64 border-r border-gray-200 bg-gray-50/50 hidden md:flex flex-col flex-shrink-0">
+                        <div class="p-4">
+                            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4 px-3">Admin Panel</p>
+                            <nav class="space-y-1">${sidebarHtml}</nav>
+                        </div>
+                    </aside>
+                    <div class="flex-1 overflow-y-auto p-6 lg:p-8 relative">${contentHtml}</div>
+                </div>
+            `;
+        }
+
+        function attachAdminListeners() {}
+
+        window.openItemModal = (item) => {
+            const isEdit = !!item;
+            const isMaster = state.profile.role === 'master_admin';
+            
+            // Determine clubs admin has access to
+            let adminClubs = [];
+            if (state.profile.clubs && Array.isArray(state.profile.clubs)) {
+                adminClubs = state.profile.clubs;
+            } else if (state.profile.club) {
+                adminClubs = [state.profile.club];
+            }
+            
+            const title = isEdit ? 'Edit Item' : 'Add New Item';
+            const name = isEdit ? item.item_name : '';
+            const cupboard = isEdit ? item.cupboard : (isMaster ? 'TL' : (adminClubs[0] || 'TL'));
+            const shelf = isEdit ? (item.shelf || 'Shelf 1') : 'Shelf 1';
+            const qty = isEdit ? item.total_quantity : 1;
+
+            // Only show cupboard options the admin has access to
+            const opts = CUPBOARDS
+                .filter(c => isMaster || adminClubs.includes(c.id))
+                .map(c => `<option value="${c.id}" ${cupboard === c.id ? 'selected' : ''}>${c.name}</option>`)
+                .join('');
+                
+            const shelfOpts = [1, 2, 3, 4].map(s => `<option value="Shelf ${s}" ${shelf === `Shelf ${s}` ? 'selected' : ''}>Shelf ${s}</option>`).join('');
+
+            const html = `
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-900">${title}</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                        <input type="text" id="adminItemName" value="${name}" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20" />
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Cupboard Assignment</label>
+                            <select id="adminItemCupboard" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20">${opts}</select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Shelf Number</label>
+                            <select id="adminItemShelf" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20">${shelfOpts}</select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Total Quantity</label>
+                        <input type="number" id="adminItemQty" min="1" value="${qty}" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20" />
+                    </div>
+                    <button onclick='saveItem(${isEdit ? JSON.stringify(item) : null})' id="saveItemBtn" class="w-full mt-4 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-300 text-white font-medium rounded-lg transition-colors flex justify-center items-center h-10">
+                        Save Item
+                    </button>
+                </div>
+            `;
+            openModal(html);
+        };
+
+        window.saveItem = async (existingItem) => {
+            const name = document.getElementById('adminItemName').value;
+            const cupboard = document.getElementById('adminItemCupboard').value;
+            const shelf = document.getElementById('adminItemShelf').value;
+            const qty = Number(document.getElementById('adminItemQty').value);
+            const btn = document.getElementById('saveItemBtn');
+
+            if (!name) return showToast("Item name is required", "error");
+
+            btn.innerHTML = `<div class="loader w-5 h-5 border-2 border-white border-t-transparent"></div>`;
+            btn.disabled = true;
+
+            try {
+                if (!existingItem) {
+                    await addDoc(collection(db, getPath('inventory')), {
+                        item_name: name, cupboard: cupboard, shelf: shelf, total_quantity: qty, available_quantity: qty
+                    });
+                    showToast("Item added successfully");
+                } else {
+                    const diff = qty - existingItem.total_quantity;
+                    await updateDoc(doc(db, getPath('inventory'), existingItem.id), {
+                        item_name: name, cupboard: cupboard, shelf: shelf, total_quantity: qty,
+                        available_quantity: Number(existingItem.available_quantity) + diff
+                    });
+                    showToast("Item updated successfully");
+                }
+                closeModal();
+            } catch (e) {
+                showToast("Error saving item", "error");
+                btn.innerHTML = "Save Item";
+                btn.disabled = false;
+            }
+        };
+
+        window.deleteItem = async (id) => {
+            if(!confirm("Are you sure you want to delete this item?")) return;
+            try {
+                await deleteDoc(doc(db, getPath('inventory'), id));
+                showToast("Item deleted");
+            } catch (e) { showToast("Error deleting", "error"); }
+        };
+
+        window.returnItem = async (tx) => {
+            try {
+                const item = state.inventory.find(i => i.id === tx.item_id);
+                if (item) {
+                    await updateDoc(doc(db, getPath('inventory'), tx.item_id), {
+                        available_quantity: Number(item.available_quantity) + Number(tx.quantity)
+                    });
+                }
+                await updateDoc(doc(db, getPath('transactions'), tx.id), { status: 'returned' });
+                showToast("Item marked as returned");
+            } catch (e) { showToast("Error returning item", "error"); }
+        };
+
+        // USER MANAGEMENT (Master Admin)
+        window.openUserModal = (userObj) => {
+            const role = userObj.role || 'user';
+            const userClubs = userObj.clubs || (userObj.club ? [userObj.club] : []);
+            
+            const clubsCheckboxes = CUPBOARDS.map(c => `
+                <label class="flex items-center gap-2 p-2 border border-gray-100 rounded-md hover:bg-gray-50 cursor-pointer transition-colors">
+                    <input type="checkbox" value="${c.id}" class="admin-club-checkbox w-4 h-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded" ${userClubs.includes(c.id) ? 'checked' : ''}>
+                    <span class="text-sm font-medium text-gray-700">${c.name}</span>
+                </label>
+            `).join('');
+
+            const html = `
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-900">Edit User Role</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <p class="text-sm text-gray-500 mb-1">User</p>
+                        <p class="font-medium text-gray-900">${userObj.name} <span class="text-gray-500 font-normal">(${userObj.email})</span></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                        <select id="editUserRole" class="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20" onchange="document.getElementById('editUserClubWrapper').style.display = this.value === 'admin' ? 'block' : 'none'">
+                            <option value="user" ${role === 'user' ? 'selected' : ''}>Normal User</option>
+                            <option value="admin" ${role === 'admin' ? 'selected' : ''}>Club Admin</option>
+                            <option value="master_admin" ${role === 'master_admin' ? 'selected' : ''}>Master Admin</option>
+                        </select>
+                    </div>
+                    <div id="editUserClubWrapper" style="display: ${role === 'admin' ? 'block' : 'none'};">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Assigned Clubs (Select multiple)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            ${clubsCheckboxes}
+                        </div>
+                    </div>
+                    <button onclick='saveUserRole("${userObj.id}")' id="saveUserBtn" class="w-full mt-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors flex justify-center items-center h-10">
+                        Save Changes
+                    </button>
+                </div>
+            `;
+            openModal(html);
+        };
+
+        window.saveUserRole = async (userId) => {
+            const newRole = document.getElementById('editUserRole').value;
+            let newClubs = [];
+            
+            if (newRole === 'admin') {
+                const checkboxes = document.querySelectorAll('.admin-club-checkbox:checked');
+                newClubs = Array.from(checkboxes).map(cb => cb.value);
+                
+                if (newClubs.length === 0) {
+                    showToast("Please select at least one club for the admin", "error");
+                    return;
+                }
+            }
+
+            const btn = document.getElementById('saveUserBtn');
+            btn.innerHTML = `<div class="loader w-5 h-5 border-2 border-white border-t-transparent"></div>`;
+            btn.disabled = true;
+
+            try {
+                await updateDoc(doc(db, getPath('users'), userId), {
+                    role: newRole,
+                    clubs: newClubs,
+                    club: null // Wipe old legacy field if it exists
+                });
+                showToast("User role updated successfully!");
+                closeModal();
+            } catch (e) {
+                showToast("Error updating user", "error");
+                btn.innerHTML = "Save Changes";
+                btn.disabled = false;
+            }
+        };
+
+        // Initialize App & Routing Listeners
+        window.onload = () => {
+            lucide.createIcons();
+            window.addEventListener('hashchange', handleHashChange);
+            init();
+        };
+
+    </script>
+</body>
+</html>
